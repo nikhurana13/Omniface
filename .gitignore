@@ -1,0 +1,55 @@
+# ── Environment & Secrets ───────────────────────────────────────────────────
+# NEVER commit real .env files or credentials
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.sample
+
+# Firebase / Google Cloud service account keys
+**/*-adminsdk-*.json
+**/firebase-credentials.json
+**/firebase-key.json
+**/service-account*.json
+**/gcloud-credentials.json
+
+# Private keys & certificates
+**/*.pem
+**/*.key
+**/*.pkcs12
+**/*.pfx
+
+# ── Python / Backend ────────────────────────────────────────────────────────
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/*.pyd
+**/.Python
+**/*.egg
+**/*.egg-info/
+**/dist/
+**/build/
+**/venv/
+**/.venv/
+**/env/
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+
+# ── Node.js / Frontend ──────────────────────────────────────────────────────
+**/node_modules/
+**/.next/
+**/out/
+**/.turbo/
+**/.vercel/
+**/*.tsbuildinfo
+**/next-env.d.ts
+
+# ── Uploads & Temp ──────────────────────────────────────────────────────────
+**/tmp/
+**/uploads/
+
+# ── IDE & OS ────────────────────────────────────────────────────────────────
+**/.vscode/
+**/.idea/
+**/.DS_Store
+**/Thumbs.db

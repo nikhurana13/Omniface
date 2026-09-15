@@ -1,95 +1,79 @@
 'use client';
 
 import { AnalysisResult } from './analysis';
+import { authService } from './auth';
 
-const HISTORY_KEY = 'omniface_analysis_history';
+const BACKEND_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
-// Default initial forensic history records
-const DEFAULT_HISTORY: AnalysisResult[] = [
-  {
-    id: 'ana_172561001',
-    fileName: 'executive_press_conference.mp4',
-    fileSize: '18.4 MB',
-    mediaType: 'video',
-    previewUrl: '/assets/sample-video-thumb.jpg',
-    classification: 'DEEPFAKE DETECTED',
-    isSynthetic: true,
-    confidence: 96.4,
-    sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
-    timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    processingTimeMs: 142,
-    indicators: [
-      { name: 'Spatial Residuals', score: 94, status: 'anomalous', description: 'StyleGAN blending seams identified' },
-      { name: 'Micro-vascular rPPG', score: 0, status: 'anomalous', description: '0.0 BPM cardiovascular flatline' },
-    ],
-    suspiciousFrames: [12, 34, 58, 89],
-    summary: 'Facial reenactment with synthetic audio track and missing physiological cardiovascular pulse.',
-  },
-  {
-    id: 'ana_172561002',
-    fileName: 'broadcast_news_interview.mp4',
-    fileSize: '32.1 MB',
-    mediaType: 'video',
-    previewUrl: '/assets/sample-video-thumb.jpg',
-    classification: 'AUTHENTIC MEDIA',
-    isSynthetic: false,
-    confidence: 98.8,
-    sha256: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-    processingTimeMs: 118,
-    indicators: [
-      { name: 'Sensor Noise', score: 3, status: 'normal', description: 'Natural Bayer CFA interpolation verified' },
-      { name: 'Micro-vascular rPPG', score: 72, status: 'normal', description: '72 BPM regular human pulse rate' },
-    ],
-    summary: 'Verified authentic broadcast stream with organic biological rhythms and noise continuity.',
-  },
-  {
-    id: 'ana_172561003',
-    fileName: 'candidate_vocal_endorsement.wav',
-    fileSize: '4.2 MB',
-    mediaType: 'audio',
-    previewUrl: '',
-    classification: 'DEEPFAKE DETECTED',
-    isSynthetic: true,
-    confidence: 97.2,
-    sha256: '4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-    processingTimeMs: 96,
-    indicators: [
-      { name: 'Neural Vocoder Harmonics', score: 95, status: 'anomalous', description: 'HiFi-GAN upsampling phase discontinuity' },
-    ],
-    summary: 'Zero-shot neural voice clone identified via vocoder spectral artifact signature.',
-  },
-  {
-    id: 'ana_172561004',
-    fileName: 'id_document_portrait.png',
-    fileSize: '2.8 MB',
-    mediaType: 'image',
-    previewUrl: '/hero-reveal.png',
-    classification: 'DEEPFAKE DETECTED',
-    isSynthetic: true,
-    confidence: 93.1,
-    sha256: 'ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-    processingTimeMs: 84,
-    indicators: [
-      { name: 'Corneal Reflections', score: 88, status: 'anomalous', description: 'Asymmetric specular corneal highlights' },
-    ],
-    summary: 'Generative diffusion portrait synthesis detected via facial symmetry and lighting divergence.',
-  },
-];
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  if (typeof window !== 'undefined') {
+    const token = await authService.getIdToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+// Demo item IDs to automatically purge from legacy browser caches
+const DEMO_IDS = new Set([
+  'ana_172561001',
+  'ana_172561002',
+  'ana_172561003',
+  'ana_172561004',
+]);
+
+function getHistoryKey(): string {
+  if (typeof window === 'undefined') return 'omniface_analysis_history';
+  try {
+    const userStr = localStorage.getItem('omniface_auth_user');
+    if (userStr) {
+      const user = JSON.parse(userStr);
+      if (user?.id) {
+        return `omniface_history_${user.id}`;
+      }
+    }
+  } catch {}
+  return 'omniface_analysis_history';
+}
+
+// Default initial forensic history records (empty for production accounts)
+const DEFAULT_HISTORY: AnalysisResult[] = [];
 
 export const historyService = {
-  // Get all history items
+  // Get all history items from local cache
   getAll: (): AnalysisResult[] => {
     if (typeof window === 'undefined') return DEFAULT_HISTORY;
     try {
-      const stored = localStorage.getItem(HISTORY_KEY);
+      const key = getHistoryKey();
+      // Also clean up any legacy global key if it exists
+      const legacy = localStorage.getItem('omniface_analysis_history');
+      if (legacy) {
+        try {
+          const parsedLegacy: AnalysisResult[] = JSON.parse(legacy);
+          const cleanedLegacy = parsedLegacy.filter((item) => !DEMO_IDS.has(item.id));
+          if (cleanedLegacy.length === 0) {
+            localStorage.removeItem('omniface_analysis_history');
+          } else {
+            localStorage.setItem('omniface_analysis_history', JSON.stringify(cleanedLegacy));
+          }
+        } catch {
+          localStorage.removeItem('omniface_analysis_history');
+        }
+      }
+
+      const stored = localStorage.getItem(key);
       if (!stored) {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(DEFAULT_HISTORY));
         return DEFAULT_HISTORY;
       }
-      return JSON.parse(stored);
+      const parsed: AnalysisResult[] = JSON.parse(stored);
+      // Strip any legacy demo IDs automatically
+      const clean = parsed.filter((item) => !DEMO_IDS.has(item.id));
+      if (clean.length !== parsed.length) {
+        localStorage.setItem(key, JSON.stringify(clean));
+      }
+      return clean;
     } catch {
       return DEFAULT_HISTORY;
     }
@@ -100,13 +84,92 @@ export const historyService = {
     return historyService.getAll();
   },
 
+  // Async fetch from FastAPI backend and merge with local history
+  fetchReports: async (page = 1, perPage = 50): Promise<AnalysisResult[]> => {
+    const local = historyService.getAll();
+    try {
+      const authHeaders = await getAuthHeaders();
+      const res = await fetch(`${BACKEND_API_URL}/api/v1/reports?page=${page}&per_page=${perPage}`, {
+        headers: authHeaders,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const items = data.items || [];
+        const remoteResults: AnalysisResult[] = items.map((r: any) => {
+          const verdict = r.verdict || (r.is_deepfake ? 'fake' : 'real');
+          const isSynthetic = verdict === 'fake';
+          let rawConf = r.confidence;
+          if (rawConf === undefined || rawConf === null) {
+            if (r.confidence_score !== undefined) {
+              rawConf = verdict === 'real' ? (1.0 - r.confidence_score) * 100 : r.confidence_score * 100;
+            } else {
+              rawConf = 94.0;
+            }
+          } else if (rawConf <= 1.0) {
+            rawConf = rawConf * 100;
+          }
+          const confidence = +Number(rawConf).toFixed(1);
+          const classification = isSynthetic
+            ? 'DEEPFAKE DETECTED'
+            : verdict === 'uncertain'
+            ? 'SUSPICIOUS MANIPULATION'
+            : 'AUTHENTIC MEDIA';
+
+          return {
+            id: r.report_id || `rpt_${Date.now()}`,
+            fileName: r.file_name || 'analyzed_media',
+            fileSize: r.file_size || 'N/A',
+            mediaType: r.modality || 'image',
+            previewUrl: r.preview_url || '',
+            classification,
+            isSynthetic,
+            confidence,
+            sha256: r.sha256 || '',
+            timestamp: r.created_at || new Date().toISOString(),
+            processingTimeMs: r.latency_ms || 120,
+            indicators: r.indicators || [],
+            summary: r.summary || '',
+          };
+        });
+
+        // Merge remote and local (preserve local fields if remote fallback is empty)
+        const localMap = new Map(local.map((item) => [item.id, item]));
+        const remoteIds = new Set<string>();
+
+        const mergedRemote = remoteResults.map((remote) => {
+          remoteIds.add(remote.id);
+          const existingLocal = localMap.get(remote.id);
+          if (existingLocal) {
+            return {
+              ...existingLocal,
+              ...remote,
+              previewUrl: remote.previewUrl || existingLocal.previewUrl,
+              fileName: remote.fileName && remote.fileName !== 'analyzed_media' ? remote.fileName : existingLocal.fileName,
+              fileSize: remote.fileSize && remote.fileSize !== 'N/A' ? remote.fileSize : existingLocal.fileSize,
+            };
+          }
+          return remote;
+        });
+
+        const merged = [...mergedRemote, ...local.filter((x) => !remoteIds.has(x.id))];
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(getHistoryKey(), JSON.stringify(merged));
+        }
+        return merged;
+      }
+    } catch {
+      // Return local on backend network error
+    }
+    return local;
+  },
+
   // Save new analysis to history
   save: (result: AnalysisResult): void => {
     if (typeof window === 'undefined') return;
     try {
       const list = historyService.getAll();
       const updated = [result, ...list.filter((item) => item.id !== result.id)];
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+      localStorage.setItem(getHistoryKey(), JSON.stringify(updated));
     } catch {
       // ignore
     }
@@ -123,7 +186,7 @@ export const historyService = {
     try {
       const list = historyService.getAll();
       const updated = list.filter((item) => item.id !== id);
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+      localStorage.setItem(getHistoryKey(), JSON.stringify(updated));
     } catch {
       // ignore
     }
@@ -138,7 +201,8 @@ export const historyService = {
   // Clear history
   clear: (): void => {
     if (typeof window !== 'undefined') {
-      localStorage.removeItem(HISTORY_KEY);
+      localStorage.removeItem(getHistoryKey());
+      localStorage.removeItem('omniface_analysis_history');
     }
   },
 

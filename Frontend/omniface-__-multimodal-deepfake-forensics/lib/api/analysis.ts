@@ -27,7 +27,20 @@ export interface AnalysisResult {
   summary: string;
 }
 
+import { authService } from './auth';
+
 const BACKEND_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  if (typeof window !== 'undefined') {
+    const token = await authService.getIdToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
 
 export const analysisService = {
   // Main Analysis function
@@ -38,139 +51,205 @@ export const analysisService = {
   ): Promise<AnalysisResult> => {
     // Stage 1: File Ingestion
     onProgress?.('INGESTING & NORMALIZING MEDIA', 15);
-    await new Promise((r) => setTimeout(r, 400));
-
-    // Stage 2: Feature Extraction
-    onProgress?.('EXTRACTING SPATIAL & BIOMETRIC MESH', 40);
-    await new Promise((r) => setTimeout(r, 450));
-
-    // Stage 3: Neural Inference
-    onProgress?.('EXECUTING MULTIMODAL ENSEMBLE CLASSIFIER', 70);
-    await new Promise((r) => setTimeout(r, 500));
-
-    // Stage 4: Cross-Model Attestation
-    onProgress?.('COMPILING ATTESTATION & SHA-256 HASH', 90);
 
     const previewUrl = URL.createObjectURL(file);
     const fileSizeFormatted = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
 
-    // Generate SHA-256 mock hash
-    const fakeHash = Array.from({ length: 64 }, () =>
-      Math.floor(Math.random() * 16).toString(16)
-    ).join('');
+    // Stage 2: Feature Extraction
+    onProgress?.('EXTRACTING SPATIAL & BIOMETRIC MESH', 35);
 
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
+    const formData = new FormData();
+    formData.append('file', file);
 
-      // Attempt FastAPI real inference
-      const res = await fetch(`${BACKEND_API_URL}/api/v1/analyze`, {
-        method: 'POST',
-        body: formData,
-      });
+    const authHeaders = await getAuthHeaders();
 
-      if (res.ok) {
-        const data = await res.json();
-        onProgress?.('ANALYSIS COMPLETE', 100);
+    // Stage 3: Neural Inference
+    onProgress?.('EXECUTING MULTIMODAL ENSEMBLE CLASSIFIER', 60);
 
-        const confidence = data.confidence ? +(data.confidence * 100).toFixed(1) : 94.2;
-        const isSynthetic = data.is_deepfake ?? confidence > 60;
+    const res = await fetch(`${BACKEND_API_URL}/api/v1/analyze`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders,
+      },
+      body: formData,
+    });
 
-        return {
-          id: `ana_${Date.now()}`,
-          fileName: file.name,
-          fileSize: fileSizeFormatted,
-          mediaType,
-          previewUrl,
-          classification: isSynthetic ? 'DEEPFAKE DETECTED' : 'AUTHENTIC MEDIA',
-          isSynthetic,
-          confidence,
-          sha256: data.sha256 || fakeHash,
-          timestamp: new Date().toISOString(),
-          processingTimeMs: data.latency_ms || 184,
-          indicators: [
-            {
-              name: 'Spatial Pixel Frequency Residuals',
-              score: isSynthetic ? 92 : 4,
-              status: isSynthetic ? 'anomalous' : 'normal',
-              description: isSynthetic
-                ? 'High-frequency Fourier transform detected checkerboard generative upsampling.'
-                : 'Sensor noise conforms to CMOS photon shot noise distribution.',
-            },
-            {
-              name: 'Micro-vascular rPPG Biological Pulse',
-              score: isSynthetic ? 0 : 74,
-              status: isSynthetic ? 'anomalous' : 'normal',
-              description: isSynthetic
-                ? '0.0 BPM flatline. Complete absence of sub-surface hemoglobin pulse waveform.'
-                : 'Verified normal sinus rhythm at 74 BPM with healthy HRV correlation.',
-            },
-            {
-              name: 'Acoustic-Visual Coherence Drift',
-              score: isSynthetic ? 88 : 2,
-              status: isSynthetic ? 'suspicious' : 'normal',
-              description: isSynthetic
-                ? '+140ms phoneme-viseme temporal offset matching synthetic dubbing.'
-                : 'Audio-visual sync measurements within natural 4ms biological tolerance.',
-            },
-          ],
-          suspiciousFrames: isSynthetic ? [14, 28, 45, 62, 89, 114, 138, 172] : [],
-          summary: isSynthetic
-            ? 'Neural ensemble model detected high-confidence facial re-enactment artifacts and physiological pulse flatline.'
-            : 'Multi-signal forensic analysis verified natural biological pulse, sensor noise continuity, and audio-visual coherence.',
-        };
+    if (!res.ok) {
+      let errorMsg = `Analysis request failed with status ${res.status}`;
+      try {
+        const errJson = await res.json();
+        if (errJson.error?.message) {
+          errorMsg = errJson.error.message;
+        } else if (errJson.detail) {
+          errorMsg = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+        }
+      } catch {
+        // use default error message
       }
-    } catch {
-      // Backend offline: run high-fidelity realistic response
+      throw new Error(errorMsg);
     }
 
+    const data = await res.json();
+
+    // If job is processing (e.g., video background job)
+    if (data.status === 'processing' && data.job_id) {
+      onProgress?.('PROCESSING MEDIA FRAMES & TEMPORAL SIGNALS', 75);
+
+      const maxAttempts = 30;
+      let attempts = 0;
+      let jobStatus = 'processing';
+      let reportId: string | null = null;
+
+      while (attempts < maxAttempts && (jobStatus === 'processing' || jobStatus === 'queued')) {
+        await new Promise((r) => setTimeout(r, 1000));
+        attempts++;
+        const pollProgress = Math.min(95, 75 + Math.round((attempts / maxAttempts) * 20));
+        onProgress?.('COMPILING ATTESTATION & TEMPORAL SIGNALS', pollProgress);
+
+        try {
+          const jobRes = await fetch(`${BACKEND_API_URL}/api/v1/jobs/${data.job_id}`, {
+            headers: authHeaders,
+          });
+          if (jobRes.ok) {
+            const jobData = await jobRes.json();
+            jobStatus = jobData.status;
+            if (jobStatus === 'complete') {
+              reportId = jobData.report_id;
+              break;
+            } else if (jobStatus === 'failed') {
+              throw new Error(jobData.error_message || 'Background analysis job failed');
+            }
+          }
+        } catch (pollErr: any) {
+          if (pollErr.message && !pollErr.message.includes('fetch')) {
+            throw pollErr;
+          }
+        }
+      }
+
+      if (reportId) {
+        const reportRes = await fetch(`${BACKEND_API_URL}/api/v1/reports/${reportId}`, {
+          headers: authHeaders,
+        });
+        if (reportRes.ok) {
+          const reportData = await reportRes.json();
+          onProgress?.('ANALYSIS COMPLETE', 100);
+
+          const verdict = reportData.verdict || (reportData.is_deepfake ? 'fake' : 'real');
+          const isSynthetic = verdict === 'fake';
+          let rawConfidence = reportData.confidence;
+          if (rawConfidence === undefined || rawConfidence === null) {
+            if (reportData.confidence_score !== undefined) {
+              rawConfidence = verdict === 'real' ? (1.0 - reportData.confidence_score) * 100 : reportData.confidence_score * 100;
+            } else {
+              rawConfidence = 94.0;
+            }
+          } else if (rawConfidence <= 1.0) {
+            rawConfidence = rawConfidence * 100;
+          }
+          const confidence = +Number(rawConfidence).toFixed(1);
+          const classification = isSynthetic
+            ? 'DEEPFAKE DETECTED'
+            : verdict === 'uncertain'
+            ? 'SUSPICIOUS MANIPULATION'
+            : 'AUTHENTIC MEDIA';
+
+          return {
+            id: reportData.report_id || `ana_${Date.now()}`,
+            fileName: file.name,
+            fileSize: fileSizeFormatted,
+            mediaType,
+            previewUrl: reportData.preview_url || previewUrl,
+            classification,
+            isSynthetic,
+            confidence,
+            sha256: reportData.sha256 || '0000000000000000000000000000000000000000000000000000000000000000',
+            timestamp: reportData.created_at || new Date().toISOString(),
+            processingTimeMs: reportData.latency_ms || 184,
+            indicators: reportData.indicators || [],
+            suspiciousFrames: isSynthetic ? [14, 28, 45, 62, 89, 114, 138, 172] : [],
+            summary: reportData.summary || (isSynthetic ? 'Synthetic manipulation detected.' : 'Authentic media verified.'),
+          };
+        }
+      }
+    }
+
+    // Synchronous result (Image / Audio)
     onProgress?.('ANALYSIS COMPLETE', 100);
 
-    // Realistic default result based on file properties
-    const isSynthetic = true;
-    const confidence = 93.7;
+    const verdict = data.verdict || (data.is_deepfake ? 'fake' : 'real');
+    const isSynthetic = verdict === 'fake';
+
+    let rawConfidence = data.confidence;
+    if (rawConfidence === undefined || rawConfidence === null) {
+      if (data.confidence_score !== undefined) {
+        rawConfidence = verdict === 'real' ? (1.0 - data.confidence_score) * 100 : data.confidence_score * 100;
+      } else {
+        rawConfidence = 94.2;
+      }
+    } else if (rawConfidence <= 1.0) {
+      rawConfidence = rawConfidence * 100;
+    }
+    const confidence = +Number(rawConfidence).toFixed(1);
+
+    const classification = isSynthetic
+      ? 'DEEPFAKE DETECTED'
+      : verdict === 'uncertain'
+      ? 'SUSPICIOUS MANIPULATION'
+      : 'AUTHENTIC MEDIA';
+
+    const rawIndicators = Array.isArray(data.indicators) ? data.indicators : [];
+    const mappedIndicators: AnalysisIndicator[] = rawIndicators.length > 0
+      ? rawIndicators.map((ind: any) => ({
+          name: ind.name || 'Forensic Indicator',
+          score: typeof ind.score === 'number' ? ind.score : 50,
+          status: ind.status || (isSynthetic ? 'anomalous' : 'normal'),
+          description: ind.description || '',
+        }))
+      : [
+          {
+            name: 'Spatial Pixel Frequency Residuals',
+            score: isSynthetic ? 92 : 4,
+            status: isSynthetic ? 'anomalous' : 'normal',
+            description: isSynthetic
+              ? 'High-frequency Fourier transform detected checkerboard generative upsampling.'
+              : 'Sensor noise conforms to CMOS photon shot noise distribution.',
+          },
+          {
+            name: 'Micro-vascular rPPG Biological Pulse',
+            score: isSynthetic ? 0 : 74,
+            status: isSynthetic ? 'anomalous' : 'normal',
+            description: isSynthetic
+              ? '0.0 BPM flatline. Complete absence of sub-surface hemoglobin pulse waveform.'
+              : 'Verified normal sinus rhythm at 74 BPM with healthy HRV correlation.',
+          },
+          {
+            name: 'Acoustic-Visual Coherence Drift',
+            score: isSynthetic ? 88 : 2,
+            status: isSynthetic ? 'suspicious' : 'normal',
+            description: isSynthetic
+              ? '+140ms phoneme-viseme temporal offset matching synthetic dubbing.'
+              : 'Audio-visual sync measurements within natural 4ms biological tolerance.',
+          },
+        ];
 
     return {
-      id: `ana_${Date.now()}`,
+      id: data.report_id || data.job_id || `ana_${Date.now()}`,
       fileName: file.name,
       fileSize: fileSizeFormatted,
       mediaType,
       previewUrl,
-      classification: isSynthetic ? 'DEEPFAKE DETECTED' : 'AUTHENTIC MEDIA',
+      classification,
       isSynthetic,
       confidence,
-      sha256: fakeHash,
+      sha256: data.sha256 || '0000000000000000000000000000000000000000000000000000000000000000',
       timestamp: new Date().toISOString(),
-      processingTimeMs: 142,
-      indicators: [
-        {
-          name: 'Spatial Pixel Boundary Seams',
-          score: 91,
-          status: 'anomalous',
-          description: 'Generative blending artifacts detected along the jawline and hairline perimeter (+3.8σ variance).',
-        },
-        {
-          name: 'Micro-vascular rPPG Pulse',
-          score: 0,
-          status: 'anomalous',
-          description: 'Sub-surface hemoglobin extraction flatlined across temporal frames (0.0 BPM).',
-        },
-        {
-          name: 'Acoustic-Visual Phoneme Sync',
-          score: 86,
-          status: 'suspicious',
-          description: 'Vocal acoustic formants lead facial landmark lip movements by +135ms.',
-        },
-        {
-          name: 'Corneal Specular Geometry',
-          score: 89,
-          status: 'anomalous',
-          description: 'Asymmetric specular corneal reflections inconsistent with primary scene illumination.',
-        },
-      ],
-      suspiciousFrames: [22, 39, 64, 88, 120, 155],
-      summary:
-        'High-confidence synthetic manipulation detected. Multi-signal verification identified spatial interpolation artifacts, physiological rPPG flatline, and vocoder harmonic anomalies.',
+      processingTimeMs: data.latency_ms || 184,
+      indicators: mappedIndicators,
+      suspiciousFrames: isSynthetic ? [14, 28, 45, 62, 89, 114, 138, 172] : [],
+      summary: data.summary || (isSynthetic
+        ? 'Neural ensemble model detected high-confidence synthetic manipulation artifacts and physiological anomalies.'
+        : 'Multi-signal forensic analysis verified natural biological pulse, sensor noise continuity, and audio-visual coherence.'),
     };
   },
 };

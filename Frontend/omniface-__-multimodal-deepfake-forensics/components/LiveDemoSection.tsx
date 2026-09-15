@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { analysisService } from '@/lib/api/analysis';
+import { historyService } from '@/lib/api/history';
 
 if (typeof window !== 'undefined') {
   gsap.registerPlugin(ScrollTrigger);
@@ -213,32 +215,17 @@ export default function LiveDemoSection() {
     setUploadError(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      // Attempt FastAPI backend inference
-      const res = await fetch('http://127.0.0.1:8000/api/v1/analyze', {
-        method: 'POST',
-        body: formData,
+      const result = await analysisService.analyzeMedia(file, selectedModality, (stage, percent) => {
+        setScanStageText(stage);
+        setAnalysisProgress(percent);
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setAnalysisProgress(data.confidence ? +(data.confidence * 100).toFixed(1) : 96.2);
-        setScanStageText('LIVE INFERENCE COMPLETE');
-      } else {
-        // Fallback simulated interactive analysis
-        setTimeout(() => {
-          setIsAnalyzing(false);
-          setScanStageText('LOCAL PIPELINE COMPLETE');
-        }, 1200);
-      }
-    } catch {
-      // Local fallback simulation
-      setTimeout(() => {
-        setIsAnalyzing(false);
-        setScanStageText('LOCAL PIPELINE COMPLETE');
-      }, 1000);
+      historyService.save(result);
+      setAnalysisProgress(result.confidence);
+      setScanStageText(result.classification === 'DEEPFAKE DETECTED' ? 'SYNTHETIC MEDIA DETECTED' : 'AUTHENTIC MEDIA VERIFIED');
+    } catch (err: any) {
+      setUploadError(err.message || 'Analysis request failed');
+      setScanStageText('ANALYSIS ENCOUNTERED ERROR');
     } finally {
       setIsAnalyzing(false);
     }

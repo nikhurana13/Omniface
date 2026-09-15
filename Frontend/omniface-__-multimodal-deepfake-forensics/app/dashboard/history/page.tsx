@@ -34,8 +34,14 @@ export default function HistoryPage() {
   const [selectedVerdict, setSelectedVerdict] = useState<string>('ALL');
   const [selectedItem, setSelectedItem] = useState<AnalysisResult | null>(null);
 
-  const loadRecords = () => {
+  const loadRecords = async () => {
     setRecords(historyService.getAll());
+    try {
+      const merged = await historyService.fetchReports();
+      setRecords(merged);
+    } catch {
+      // Keep local records if network fails
+    }
   };
 
   useEffect(() => {

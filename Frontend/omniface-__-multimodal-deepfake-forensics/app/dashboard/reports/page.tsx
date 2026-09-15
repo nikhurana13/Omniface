@@ -32,6 +32,9 @@ export default function ReportsPage() {
 
   useEffect(() => {
     setReports(historyService.getAll());
+    historyService.fetchReports().then((merged) => {
+      setReports(merged);
+    }).catch(() => {});
   }, []);
 
   const filteredReports = useMemo(() => {

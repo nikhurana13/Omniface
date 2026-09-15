@@ -30,19 +30,31 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
 
-  // Authenticate user session
+  // Authenticate user session with Firebase Auth lifecycle listener
   useEffect(() => {
-    const currentUser = authService.getCurrentUser();
-    if (!currentUser) {
-      router.replace('/login');
-    } else {
-      setUser(currentUser);
+    // Initial check from local session cache for instant hydration
+    const initialUser = authService.getCurrentUser();
+    if (initialUser) {
+      setUser(initialUser);
       setIsLoadingAuth(false);
     }
+
+    // Subscribe to real-time Firebase Auth state changes
+    const unsubscribe = authService.onAuthStateChange((authUser) => {
+      if (!authUser) {
+        setUser(null);
+        router.replace('/login');
+      } else {
+        setUser(authUser);
+      }
+      setIsLoadingAuth(false);
+    });
+
+    return () => unsubscribe();
   }, [router]);
 
-  const handleLogout = () => {
-    authService.logout();
+  const handleLogout = async () => {
+    await authService.logout();
     router.push('/');
   };
 

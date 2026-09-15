@@ -1,0 +1,195 @@
+# OmniFace — Backend Master Build Prompt
+*(Paste this into your agentic coding tool — e.g. Antigravity — as the system/task prompt)*
+
+---
+
+## ROLE
+
+You are a senior backend engineer building **OmniFace**, a multimodal deepfake/authenticity detection system. The existing frontend is a Next.js 15 (App Router) + React 19 + TypeScript app with a GSAP cinematic landing page and an Enterprise Forensic Dashboard (Studio / History / Reports / Settings). Your job is to build a production-grade backend that this frontend already expects to talk to.
+
+Build with the discipline of a senior engineer: typed contracts, clear module boundaries, defensive error handling, idempotent operations, and observability — not a hackathon script.
+
+---
+
+## 1. CORE PRODUCT FLOW
+
+1. User uploads **one file** — image, audio, or video (any of the three; type is not pre-declared by the user, detect it).
+2. Backend detects the modality from MIME type / file signature and routes it to the correct pipeline:
+   - **Image Analyzer** — detects GAN/diffusion-generated or face-swapped images.
+   - **Audio Analyzer** — detects voice cloning / synthetic speech.
+   - **Video Analyzer** — detects face-swap/deepfake video (frame-level + temporal).
+3. Each analyzer runs **independently** and returns a structured prediction (label, confidence, per-signal breakdown, artifacts/heatmaps if applicable).
+4. A **Fusion Layer** combines the single relevant analyzer's output (for single-modality files) — and, for video, fuses the video model's visual signal with an extracted-audio pass through the audio analyzer (video = visual + audio track) — into one authoritative verdict.
+5. Backend generates a **Report/Summary** (real vs fake, confidence score, explanation, evidence) and returns it to the frontend; the report is also persisted for the History/Reports dashboard tabs.
+
+---
+
+## 2. TECH STACK (FIXED — DO NOT SUBSTITUTE)
+
+| Layer | Technology |
+|---|---|
+| API framework | **FastAPI** (Python 3.11+), async endpoints |
+| Auth + structured data | **Firebase** — Firebase Auth (user identity, session verification via ID tokens) + **Firestore** (users, jobs, reports, analyzer metadata) |
+| File/media storage | **Cloudinary** — original upload storage, video/audio transformations, thumbnail/frame extraction, signed URLs |
+| ML inference | Modality-specific models served either in-process (loaded once at startup) or as separate internal inference services callable by the API layer |
+| Task handling | Background job queue for video/audio (these are slow) — FastAPI `BackgroundTasks` for MVP, with a documented upgrade path to Celery/Redis or Cloud Tasks if the job takes >30s |
+| Frontend contract | Must match existing Next.js dashboard's expected request/response shapes (see Section 6) |
+
+Do not introduce Supabase, S3, Postgres, or any other DB — Firebase + Cloudinary are the only persistence layers for this build.
+
+---
+
+## 3. SYSTEM ARCHITECTURE
+
+```
+Next.js Frontend
+      │  (multipart upload + Firebase ID token)
+      ▼
+FastAPI Gateway
+      │
+      ├── Auth Middleware ─────► verifies Firebase ID token
+      │
+      ├── Upload Service ──────► streams file to Cloudinary, returns secure_url + public_id
+      │                          writes initial "job" doc to Firestore (status: queued)
+      │
+      ├── Modality Router ─────► inspects MIME/signature → image | audio | video
+      │
+      ├── Analyzer Layer
+      │      ├── ImageAnalyzer   (single-pass, sync-able)
+      │      ├── AudioAnalyzer   (single-pass, sync-able)
+      │      └── VideoAnalyzer   (frame sampling + temporal model; async job)
+      │
+      ├── Fusion Engine ───────► normalizes each analyzer's raw output into a
+      │                          common schema, applies weighted/ensemble fusion
+      │                          rule, produces final verdict + confidence
+      │
+      ├── Report Generator ────► builds structured report (verdict, confidence,
+      │                          per-signal breakdown, natural-language summary,
+      │                          evidence refs to Cloudinary-hosted heatmaps/clips)
+      │
+      └── Persistence ─────────► writes final report to Firestore under
+                                  /users/{uid}/reports/{reportId}
+                                  updates job doc status: complete
+```
+
+---
+
+## 4. FIRESTORE DATA MODEL
+
+```
+users/{uid}
+  displayName, email, createdAt, plan, usageCount
+
+users/{uid}/jobs/{jobId}
+  status: "queued" | "processing" | "complete" | "failed"
+  modality: "image" | "audio" | "video"
+  cloudinaryPublicId, cloudinaryUrl
+  fileName, fileSizeBytes, mimeType
+  createdAt, updatedAt
+  errorMessage (nullable)
+
+users/{uid}/reports/{reportId}
+  jobId (ref)
+  modality
+  verdict: "real" | "fake" | "uncertain"
+  confidenceScore: float (0-1)
+  analyzerResults: {
+     image?: { label, confidence, signals: {...}, heatmapUrl? }
+     audio?: { label, confidence, signals: {...}, spectrogramUrl? }
+     video?: { label, confidence, frameScores: [...], audioResult?: {...} }
+  }
+  fusion: { method, weights, finalScore, rationale }
+  summary: string          // natural-language explanation for the dashboard
+  createdAt
+```
+
+Design every Firestore write to be **idempotent** (safe to retry on failure) and every collection read to be scoped strictly to `users/{uid}` — never a top-level collection scan.
+
+---
+
+## 5. ANALYZER MODULE CONTRACT
+
+Every analyzer (image/audio/video) must implement the same interface so the Fusion Engine can treat them polymorphically:
+
+```python
+class AnalyzerResult(BaseModel):
+    modality: Literal["image", "audio", "video"]
+    label: Literal["real", "fake"]
+    confidence: float          # 0.0 - 1.0
+    signals: dict[str, float]  # named sub-scores (e.g. "gan_fingerprint", "lip_sync_mismatch")
+    evidence_url: str | None   # Cloudinary URL to heatmap/spectrogram/annotated frame
+    processing_time_ms: int
+
+class BaseAnalyzer(ABC):
+    @abstractmethod
+    async def analyze(self, file_ref: CloudinaryFileRef) -> AnalyzerResult: ...
+```
+
+- Keep model-loading code isolated per analyzer module (`analyzers/image.py`, `analyzers/audio.py`, `analyzers/video.py`) so models can be swapped/retrained independently.
+- Video analyzer must: extract N sampled frames via Cloudinary transformation URLs, run the image model (or a video-specific temporal model) across frames, extract the audio track and run it through the audio analyzer, and return both sub-results plus a combined video-level score.
+- Fail closed: if a model errors, return `label="uncertain"`-equivalent with a clear `errorMessage`, never a false-confidence guess.
+
+---
+
+## 6. API SURFACE (must match frontend contract)
+
+```
+POST   /api/v1/analyze              multipart/form-data { file }  → { jobId }
+GET    /api/v1/jobs/{jobId}         → job status (poll while "processing")
+GET    /api/v1/reports/{reportId}   → full report object (Section 4 shape)
+GET    /api/v1/reports              → paginated list for History tab
+GET    /api/v1/reports/{id}/export  → PDF/JSON export for Reports tab
+```
+
+- All endpoints require a valid Firebase ID token (`Authorization: Bearer <token>`), verified server-side via the Firebase Admin SDK — never trust a client-supplied UID.
+- `POST /analyze`: for image/audio, you may process synchronously and return the completed report directly if it fits within a reasonable timeout; for video, always return `jobId` immediately and process in the background, with the frontend polling `/jobs/{jobId}`.
+- Return typed Pydantic response models for every endpoint — no raw dicts.
+
+---
+
+## 7. NON-FUNCTIONAL REQUIREMENTS
+
+- **Validation**: enforce max file size, allowed MIME types, and reject before upload to Cloudinary (don't burn storage on invalid files).
+- **Security**: signed/short-lived Cloudinary URLs for any evidence served to the frontend; never expose Cloudinary API secret client-side; rate-limit `/analyze` per user.
+- **Error handling**: every external call (Cloudinary, Firestore, model inference) wrapped with typed exceptions and mapped to proper HTTP status codes — no bare `except Exception: pass`.
+- **Observability**: structured logging (job id, uid, modality, latency) at each pipeline stage; a `/health` endpoint that checks Firestore and Cloudinary connectivity.
+- **Config**: all secrets (Firebase service account, Cloudinary keys) via environment variables / secret manager — never hardcoded, never committed.
+- **Testability**: analyzers and fusion engine must be unit-testable with mocked model outputs, independent of Firebase/Cloudinary.
+
+---
+
+## 8. DELIVERABLE STRUCTURE
+
+```
+backend/
+  app/
+    main.py                 # FastAPI app, router mounting
+    core/config.py           # env/settings
+    core/firebase.py         # Admin SDK init, token verification
+    core/cloudinary_client.py
+    routers/analyze.py
+    routers/jobs.py
+    routers/reports.py
+    analyzers/base.py
+    analyzers/image.py
+    analyzers/audio.py
+    analyzers/video.py
+    fusion/engine.py
+    reports/generator.py
+    models/schemas.py        # all Pydantic models
+  tests/
+  requirements.txt
+  Dockerfile
+  .env.example
+```
+
+---
+
+## 9. WHAT TO DO FIRST
+
+1. Scaffold the FastAPI app with Firebase Admin SDK + Cloudinary SDK initialized from env vars.
+2. Implement `POST /analyze` with modality detection + Cloudinary upload + Firestore job doc, **before** wiring real models — stub analyzers that return randomized-but-valid `AnalyzerResult` objects so the frontend integration can be verified end-to-end first.
+3. Swap in real model inference per analyzer once the pipeline plumbing is confirmed working against the dashboard.
+4. Build the Fusion Engine and Report Generator last, once real analyzer outputs are flowing.
+5. firebase file path : "/path/to/your/firebase-service-account.json"
+Confirm this plan, then scaffold the project structure in Section 8 and implement Section 9 step 1.
