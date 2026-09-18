@@ -53,7 +53,7 @@ from app.core.cloudinary_client import check_cloudinary_connectivity, initialize
 from app.core.config import get_settings
 from app.core.firebase import check_firestore_connectivity, initialize_firebase
 from app.models.schemas import ErrorDetail, ErrorResponse, HealthResponse
-from app.routers import analyze, jobs, reports
+from app.routers import analyze, auth, jobs, reports
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -273,6 +273,7 @@ def create_app() -> FastAPI:
 
     # ── Routers ───────────────────────────────────────────────────────────────
     app.include_router(analyze.router, prefix="/api/v1")
+    app.include_router(auth.router, prefix="/api/v1")
     app.include_router(jobs.router, prefix="/api/v1")
     app.include_router(reports.router, prefix="/api/v1")
 

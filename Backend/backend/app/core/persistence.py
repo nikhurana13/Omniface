@@ -192,3 +192,23 @@ def count_reports(uid: str) -> int:
     except Exception as exc:
         logger.debug("Firestore unavailable, counting reports from memory for uid %s: %s", uid, exc)
         return len(_mem_reports.get(uid, {}))
+
+
+# ── User reads ────────────────────────────────────────────────────────────────
+
+def get_user_by_uid(uid: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch the Firestore user document for a given UID.
+
+    Returns the document as a dict, or None if the user does not exist.
+    Used by GET /api/v1/auth/me to populate the full UserResponse.
+
+    Falls back to the in-memory store when Firestore is unavailable.
+    """
+    try:
+        doc = _user_doc(uid).get()
+        return doc.to_dict() if doc.exists else None
+    except Exception as exc:
+        logger.debug("Firestore unavailable, reading user from memory for uid %s: %s", uid, exc)
+        return _mem_users.get(uid) or None
+

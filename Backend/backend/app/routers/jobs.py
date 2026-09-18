@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core import persistence
-from app.core.firebase import verify_id_token
-from app.core.config import get_settings
+from app.core.dependencies import UserInfo, get_current_user
 from app.models.schemas import JobStatusResponse
 
 logger = logging.getLogger(__name__)
@@ -23,22 +21,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def _get_uid(authorization: Optional[str]) -> str:
-    settings = get_settings()
-    if not authorization:
-        if settings.require_auth:
-            raise HTTPException(status_code=401, detail="Authorization required.")
-        return "anonymous"
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Bearer token required.")
-    token = authorization.removeprefix("Bearer ").strip()
-    try:
-        decoded = await verify_id_token(token)
-        return decoded["uid"]
-    except Exception:
-        if settings.require_auth:
-            raise HTTPException(status_code=401, detail="Invalid token.")
-        return "anonymous"
+async def _get_uid_removed_placeholder() -> None:
+    """Placeholder — _get_uid() was removed and replaced by Depends(get_current_user)."""
+    pass  # noqa: PIE790
 
 
 @router.get(
@@ -49,7 +34,7 @@ async def _get_uid(authorization: Optional[str]) -> str:
 )
 async def get_job_status(
     job_id: str,
-    authorization: Optional[str] = Header(None, alias="Authorization"),
+    current_user: UserInfo = Depends(get_current_user),
 ) -> JobStatusResponse:
     """
     Poll the status of a background analysis job (primarily used for video).
@@ -57,7 +42,7 @@ async def get_job_status(
     Returns the job status, and when complete, includes the `report_id`
     so the frontend can fetch the full report.
     """
-    uid = await _get_uid(authorization)
+    uid = current_user.uid
 
     job = persistence.get_job(uid, job_id)
     if not job:

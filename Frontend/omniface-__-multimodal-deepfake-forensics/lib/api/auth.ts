@@ -259,7 +259,137 @@ export const authService = {
       if (typeof window !== 'undefined') {
         localStorage.removeItem(AUTH_KEY);
         localStorage.removeItem(TOKEN_KEY);
+        // Clear session presence cookie (read by Next.js middleware)
+        document.cookie = 'omniface_session=; path=/; max-age=0; SameSite=Lax';
       }
     }
   },
 };
+
+// ── Set session cookie on login / register / auth-state-change ────────────────
+// The cookie is a lightweight presence signal used by Next.js middleware to
+// protect dashboard routes server-side (edge runtime). It does NOT contain
+// the actual token — the Firebase ID token stays in localStorage.
+function _setSessionCookie(): void {
+  if (typeof document === 'undefined') return;
+  document.cookie = 'omniface_session=1; path=/; SameSite=Lax';
+}
+
+// Patch login / register / onAuthStateChange to also set the session cookie.
+// We use module-level init so existing authService callers are unaffected.
+if (typeof window !== 'undefined') {
+  const _origLogin = authService.login.bind(authService);
+  authService.login = async (...args) => {
+    const result = await _origLogin(...args);
+    if (result.success) _setSessionCookie();
+    return result;
+  };
+
+  const _origRegister = authService.register.bind(authService);
+  authService.register = async (...args) => {
+    const result = await _origRegister(...args);
+    if (result.success) _setSessionCookie();
+    return result;
+  };
+}
+
+
+// ── fetchWithAuth — Authenticated fetch interceptor ───────────────────────────
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000';
+
+/**
+ * Fetch wrapper that automatically attaches a Firebase Bearer token.
+ *
+ * On 401 response:
+ *   1. Forces a token refresh (Firebase SDK fetches a new token from Google).
+ *   2. Retries the original request once with the refreshed token.
+ *   3. If still 401: calls logout() and redirects to /login.
+ *
+ * Usage:
+ *   const res = await fetchWithAuth('/api/v1/reports');
+ *   const data = await res.json();
+ */
+export async function fetchWithAuth(
+  path: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+
+  const attachToken = async (forceRefresh = false): Promise<RequestInit> => {
+    const token = await authService.getIdToken(forceRefresh);
+    return {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers ?? {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    };
+  };
+
+  // First attempt
+  let response = await fetch(url, await attachToken());
+
+  if (response.status === 401) {
+    // Force-refresh the Firebase token and retry once
+    response = await fetch(url, await attachToken(true));
+
+    if (response.status === 401) {
+      // Token is unrecoverable — sign out and redirect to login
+      await authService.logout();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+    }
+  }
+
+  return response;
+}
+
+
+// ── getProfile — Fetch current user profile from backend ─────────────────────
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  avatar_url?: string | null;
+  created_at?: string | null;
+  last_login_at?: string | null;
+}
+
+/**
+ * Fetch the authenticated user's profile from GET /api/v1/auth/me.
+ * Returns null if unauthenticated or on any network error.
+ */
+export async function getProfile(): Promise<UserProfile | null> {
+  try {
+    const res = await fetchWithAuth('/api/v1/auth/me');
+    if (!res.ok) return null;
+    return res.json() as Promise<UserProfile>;
+  } catch {
+    return null;
+  }
+}
+
+
+// ── serverLogout — Backend token revocation ───────────────────────────────────
+
+/**
+ * Revoke the user's Firebase refresh tokens server-side via POST /api/v1/auth/logout,
+ * then sign out from Firebase client-side.
+ *
+ * Server-side revocation invalidates all sessions across all devices.
+ * Client-side signOut() clears the local Firebase state.
+ */
+export async function serverLogout(): Promise<void> {
+  try {
+    await fetchWithAuth('/api/v1/auth/logout', { method: 'POST' });
+  } catch {
+    // Non-critical — local logout still proceeds
+  }
+  await authService.logout();
+}
+

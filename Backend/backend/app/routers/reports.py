@@ -14,12 +14,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
 
 from app.core import cloudinary_client, persistence
-from app.core.config import get_settings
-from app.core.firebase import verify_id_token
+from app.core.dependencies import UserInfo, get_current_user
 from app.models.schemas import (
     ExportResponse,
     IndicatorItem,
@@ -32,27 +31,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ── Auth helper (shared) ───────────────────────────────────────────────────────
-
-async def _get_uid(authorization: Optional[str]) -> str:
-    settings = get_settings()
-    if not authorization:
-        if settings.require_auth:
-            raise HTTPException(status_code=401, detail="Authorization required.")
-        return "anonymous"
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Bearer token required.")
-    token = authorization.removeprefix("Bearer ").strip()
-    try:
-        decoded = await verify_id_token(token)
-        return decoded["uid"]
-    except Exception:
-        if settings.require_auth:
-            raise HTTPException(status_code=401, detail="Invalid token.")
-        return "anonymous"
+# _get_uid() was removed — replaced by Depends(get_current_user) in dependencies.py.
 
 
-# ── Firestore doc → ReportResponse ────────────────────────────────────────────
+# ── Firestore doc → ReportResponse ─────────────────────────────────────────────
 
 def _doc_to_report_response(doc: Dict[str, Any]) -> ReportResponse:
     """Convert a raw Firestore report document to a ReportResponse model."""
@@ -144,13 +126,13 @@ def _doc_to_report_response(doc: Dict[str, Any]) -> ReportResponse:
 async def list_reports(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
-    authorization: Optional[str] = Header(None, alias="Authorization"),
+    current_user: UserInfo = Depends(get_current_user),
 ) -> PaginatedReportsResponse:
     """
     Return a paginated list of reports for the authenticated user.
     Used by the History and Reports dashboard tabs.
     """
-    uid = await _get_uid(authorization)
+    uid = current_user.uid
     offset = (page - 1) * per_page
 
     docs = persistence.list_reports(uid, limit=per_page, offset=offset)
@@ -180,10 +162,10 @@ async def list_reports(
 )
 async def get_report(
     report_id: str,
-    authorization: Optional[str] = Header(None, alias="Authorization"),
+    current_user: UserInfo = Depends(get_current_user),
 ) -> ReportResponse:
     """Return the full report document for display in the Reports detail view."""
-    uid = await _get_uid(authorization)
+    uid = current_user.uid
 
     doc = persistence.get_report(uid, report_id)
     if not doc:
@@ -203,14 +185,14 @@ async def get_report(
 async def export_report(
     report_id: str,
     format: str = Query("json", description="Export format: 'json' or 'certificate'"),
-    authorization: Optional[str] = Header(None, alias="Authorization"),
+    current_user: UserInfo = Depends(get_current_user),
 ) -> ExportResponse:
     """
     Export a report in a downloadable format.
     - `json`: Full structured forensic dossier as a JSON string.
     - `certificate`: Human-readable text attestation certificate.
     """
-    uid = await _get_uid(authorization)
+    uid = current_user.uid
 
     doc = persistence.get_report(uid, report_id)
     if not doc:
@@ -304,13 +286,13 @@ Signature: RSA-PSS-{report.sha256[:32]}
 )
 async def get_report_media(
     report_id: str,
-    authorization: Optional[str] = Header(None, alias="Authorization"),
+    current_user: UserInfo = Depends(get_current_user),
 ):
     """
     Authorized endpoint to fetch time-limited signed delivery URL for private report media.
     Guarantees user ownership and prevents cross-user access (IDOR).
     """
-    uid = await _get_uid(authorization)
+    uid = current_user.uid
     doc = persistence.get_report(uid, report_id)
     if not doc:
         raise HTTPException(

@@ -171,3 +171,28 @@ class ErrorDetail(BaseModel):
 class ErrorResponse(BaseModel):
     """Standard error envelope returned on all 4xx/5xx responses."""
     error: ErrorDetail
+
+
+# ── Auth Response Models ───────────────────────────────────────────────────────
+
+class UserResponse(BaseModel):
+    """
+    Authenticated user profile returned by GET /api/v1/auth/me.
+
+    Firebase manages credentials — hashed_password is never stored here.
+    All identity data comes from the Firebase JWT claims or Firestore user doc.
+    """
+    id: str = Field(..., description="Firebase UID")
+    name: str = Field(..., description="User display name")
+    email: str = Field(..., description="User email address")
+    role: str = Field(default="investigator", description="User role: investigator | analyst | admin")
+    avatar_url: Optional[str] = Field(None, description="Profile picture URL")
+    created_at: Optional[datetime] = Field(None, description="Account creation timestamp (UTC)")
+    last_login_at: Optional[datetime] = Field(None, description="Last successful login (UTC)")
+
+    model_config = ConfigDict()
+
+
+class MessageResponse(BaseModel):
+    """Generic message response — used by POST /api/v1/auth/logout."""
+    message: str

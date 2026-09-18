@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 
 from app.analyzers.audio import AudioAnalyzer
 from app.analyzers.base import CloudinaryFileRef
@@ -37,7 +37,7 @@ from app.analyzers.image import ImageAnalyzer
 from app.analyzers.video import VideoAnalyzer
 from app.core import cloudinary_client, persistence
 from app.core.config import get_settings
-from app.core.firebase import verify_id_token
+from app.core.dependencies import UserInfo, get_current_user
 from app.fusion.engine import FusionEngine
 from app.models.schemas import AnalyzeResponse
 from app.reports.generator import ReportGenerator, compute_sha256
@@ -232,43 +232,7 @@ def _detect_modality(mime_type: str, filename: str) -> str:
     )
 
 
-async def _get_uid_from_token(authorization: Optional[str]) -> str:
-    """
-    Extract and verify the Firebase ID token from the Authorization header.
-
-    If REQUIRE_AUTH=False (development mode), returns a default anonymous UID when no
-    token is provided. REQUIRE_AUTH must be True in all production deployments.
-    """
-    settings = get_settings()
-
-    if not authorization:
-        if settings.require_auth:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authorization header required.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        # Development mode only: anonymous user
-        return "anonymous"
-
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header must use Bearer scheme.",
-        )
-
-    token = authorization.removeprefix("Bearer ").strip()
-    try:
-        decoded = await verify_id_token(token)
-        return decoded["uid"]
-    except Exception as exc:
-        logger.warning("Token verification failed: %s", exc)
-        if settings.require_auth:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired Firebase ID token.",
-            )
-        return "anonymous"
+# _get_uid_from_token() was removed — replaced by Depends(get_current_user) in dependencies.py.
 
 
 async def _run_analysis_pipeline(
@@ -376,7 +340,7 @@ async def _run_analysis_pipeline(
 async def analyze_media(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Image, audio, or video file to analyze"),
-    authorization: Optional[str] = Header(None, alias="Authorization"),
+    current_user: UserInfo = Depends(get_current_user),
 ) -> AnalyzeResponse:
     """
     Upload and analyze a media file for deepfake detection.
@@ -392,8 +356,8 @@ async def analyze_media(
     settings = get_settings()
     start_time = time.perf_counter()
 
-    # ── Auth ──────────────────────────────────────────────────────────────────
-    uid = await _get_uid_from_token(authorization)
+    # ── Auth ───────────────────────────────────────────────────────────────
+    uid = current_user.uid
 
     # ── Read file bytes ───────────────────────────────────────────────────────
     file_bytes = await file.read()
