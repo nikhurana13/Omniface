@@ -32,8 +32,6 @@ export interface User {
   createdAt: string;
 }
 
-export type UserProfile = User;
-
 export interface AuthResponse {
   success: boolean;
   token?: string;
@@ -355,7 +353,9 @@ export interface UserProfile {
   name: string;
   email: string;
   role: string;
+  avatarUrl?: string;
   avatar_url?: string | null;
+  createdAt?: string;
   created_at?: string | null;
   last_login_at?: string | null;
 }
