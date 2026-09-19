@@ -1,0 +1,4 @@
+[build.environment]
+# These keys are intentionally public `NEXT_PUBLIC_*` runtime config values.
+# Omit only these two keys from Netlify secret-value matching to avoid false positives.
+SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_API_URL,NEXT_PUBLIC_APP_NAME"

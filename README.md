@@ -261,7 +261,7 @@ Omniface version 2.0/
 | Variable | Description | Example / Default |
 | :--- | :--- | :--- |
 | `NEXT_PUBLIC_API_URL` | Base URL of the FastAPI backend | `http://127.0.0.1:8000` (no trailing slash) |
-| `NEXT_PUBLIC_APP_NAME` | Public branding name | `OmniFace Deepfake Forensics` |
+| `NEXT_PUBLIC_APP_NAME` | Public branding name | `OmniFace Local` |
 | `NEXT_PUBLIC_MAX_UPLOAD_MB` | Client-side file size guard | `100` |
 | `NEXT_PUBLIC_FIREBASE_API_KEY` | Firebase Client Web API Key | `AIzaSy...` |
 | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Firebase Auth Domain | `your-app.firebaseapp.com` |
