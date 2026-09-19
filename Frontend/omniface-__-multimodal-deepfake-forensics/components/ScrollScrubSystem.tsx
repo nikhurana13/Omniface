@@ -33,7 +33,7 @@ export default function ScrollScrubSystem() {
     };
   }, []);
 
-  const initScrollScrubTimelines = () => {
+  function initScrollScrubTimelines() {
     const sectionIds = [
       'problem-section',
       'how-it-works-section',

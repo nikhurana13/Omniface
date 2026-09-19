@@ -55,7 +55,7 @@ export default function HorizontalScrollEngine() {
   const [activeSection, setActiveSection] = useState(0);
   const [scrollPercent, setScrollPercent] = useState(0);
   const isRunningRef = useRef(false);
-  const lastScrollTimeRef = useRef(Date.now());
+  const lastScrollTimeRef = useRef(0);
   const touchStartRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {

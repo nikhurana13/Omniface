@@ -69,7 +69,7 @@ export default function HeroNav({ onScrollTo }: HeroNavProps) {
             color: '#FFFFFF',
           }}
         >
-          OMNIFACE <span style={{ color: '#888888' }}>//</span> FORENSICS
+          OMNIFACE <span style={{ color: '#888888' }}>{'//'}</span> FORENSICS
         </span>
       </div>
 

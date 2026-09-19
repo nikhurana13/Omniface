@@ -18,10 +18,13 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithPopup,
   User as FirebaseUser,
   AuthError,
 } from 'firebase/auth';
-import { auth, isFirebaseConfigured } from '@/lib/firebase';
+import { auth, googleProvider, isFirebaseConfigured } from '@/lib/firebase';
 
 export interface User {
   id: string;
@@ -37,6 +40,8 @@ export interface AuthResponse {
   token?: string;
   user?: User;
   error?: string;
+  needsVerification?: boolean;
+  email?: string;
 }
 
 const AUTH_KEY = 'omniface_auth_user';
@@ -82,6 +87,14 @@ function mapAuthError(error: unknown): string {
         return 'Access temporarily blocked due to multiple failed attempts. Please try again later.';
       case 'auth/network-request-failed':
         return 'Network error. Please check your internet connection.';
+      case 'auth/popup-closed-by-user':
+        return 'Sign-in cancelled. The Google popup was closed before completing.';
+      case 'auth/popup-blocked':
+        return 'Google sign-in popup was blocked by your browser. Please allow popups for this site.';
+      case 'auth/cancelled-popup-request':
+        return 'Only one popup request is allowed at a time.';
+      case 'auth/unauthorized-domain':
+        return 'Domain not authorized for Google OAuth in Firebase Console. Please add this domain under Firebase Authentication > Settings > Authorized domains.';
       default:
         return authErr.message || 'Authentication failed. Please try again.';
     }
@@ -92,6 +105,7 @@ function mapAuthError(error: unknown): string {
 export const authService = {
   /**
    * Login with email & password via Firebase Auth.
+   * If the account's email is not yet verified, blocks access immediately and signs out.
    */
   login: async (email: string, password: string): Promise<AuthResponse> => {
     if (!email || !email.includes('@')) {
@@ -103,6 +117,47 @@ export const authService = {
 
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const fbUser = userCredential.user;
+
+      // Check if email has been verified via Firebase Authentication
+      if (!fbUser.emailVerified) {
+        // Block access: immediately sign out and clean up any credentials/cookies
+        await signOut(auth);
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem(AUTH_KEY);
+          localStorage.removeItem(TOKEN_KEY);
+          document.cookie = 'omniface_session=; path=/; max-age=0; SameSite=Lax';
+        }
+
+        return {
+          success: false,
+          needsVerification: true,
+          email: fbUser.email || email.trim(),
+          error: 'Please verify your email before logging in.',
+        };
+      }
+
+      const token = await fbUser.getIdToken();
+      const user = mapFirebaseUser(fbUser);
+
+      // Cache session in localStorage for instant render hydration
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+        localStorage.setItem(TOKEN_KEY, token);
+      }
+
+      return { success: true, token, user };
+    } catch (err: unknown) {
+      return { success: false, error: mapAuthError(err) };
+    }
+  },
+
+  /**
+   * Sign in or register with Google via Firebase Auth.
+   */
+  loginWithGoogle: async (): Promise<AuthResponse> => {
+    try {
+      const userCredential = await signInWithPopup(auth, googleProvider);
       const fbUser = userCredential.user;
       const token = await fbUser.getIdToken();
       const user = mapFirebaseUser(fbUser);
@@ -121,6 +176,7 @@ export const authService = {
 
   /**
    * Register a new user with Firebase Auth.
+   * Does NOT sign the user in automatically — sends verification email and immediately signs out.
    */
   register: async (
     name: string,
@@ -152,22 +208,70 @@ export const authService = {
         // Non-critical profile update failure
       }
 
-      const token = await fbUser.getIdToken();
-      const user: User = {
-        id: fbUser.uid,
-        name: name.trim(),
-        email: fbUser.email || email.trim(),
-        role: 'investigator',
-        createdAt: fbUser.metadata.creationTime || new Date().toISOString(),
-      };
+      // Send verification email via Firebase Authentication
+      await sendEmailVerification(fbUser);
 
+      // Ensure user is NOT signed in automatically
+      await signOut(auth);
       if (typeof window !== 'undefined') {
-        localStorage.setItem(AUTH_KEY, JSON.stringify(user));
-        localStorage.setItem(TOKEN_KEY, token);
+        localStorage.removeItem(AUTH_KEY);
+        localStorage.removeItem(TOKEN_KEY);
+        document.cookie = 'omniface_session=; path=/; max-age=0; SameSite=Lax';
       }
 
-      return { success: true, token, user };
+      return {
+        success: true,
+        needsVerification: true,
+        email: fbUser.email || email.trim(),
+      };
     } catch (err: unknown) {
+      return { success: false, error: mapAuthError(err) };
+    }
+  },
+
+  /**
+   * Resend verification email to unverified user using Firebase Auth.
+   */
+  resendVerificationEmail: async (email: string, password?: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      if (auth.currentUser && auth.currentUser.email === email) {
+        await sendEmailVerification(auth.currentUser);
+        return { success: true };
+      }
+      if (password) {
+        const userCred = await signInWithEmailAndPassword(auth, email.trim(), password);
+        await sendEmailVerification(userCred.user);
+        await signOut(auth);
+        return { success: true };
+      }
+      return {
+        success: false,
+        error: 'Please log in to trigger a new verification email.',
+      };
+    } catch (err: unknown) {
+      return { success: false, error: mapAuthError(err) };
+    }
+  },
+
+  /**
+   * Send password reset email via Firebase Auth.
+   * Uses Firebase's official sendPasswordResetEmail.
+   */
+  sendPasswordReset: async (email: string): Promise<{ success: boolean; error?: string }> => {
+    if (!email || !email.includes('@')) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      return { success: true };
+    } catch (err: unknown) {
+      if (typeof err === 'object' && err !== null && 'code' in err) {
+        const authErr = err as AuthError;
+        if (authErr.code === 'auth/user-not-found') {
+          return { success: false, error: 'No account found with this email address.' };
+        }
+      }
       return { success: false, error: mapAuthError(err) };
     }
   },
@@ -177,6 +281,7 @@ export const authService = {
    */
   getCurrentUser: (): User | null => {
     if (auth.currentUser) {
+      if (!auth.currentUser.emailVerified) return null;
       return mapFirebaseUser(auth.currentUser);
     }
     if (typeof window === 'undefined') return null;
@@ -189,10 +294,10 @@ export const authService = {
   },
 
   /**
-   * Check if authenticated.
+   * Check if authenticated and verified.
    */
   isAuthenticated: (): boolean => {
-    if (auth.currentUser) return true;
+    if (auth.currentUser) return auth.currentUser.emailVerified;
     if (typeof window === 'undefined') return false;
     return !!localStorage.getItem(TOKEN_KEY);
   },
@@ -201,7 +306,7 @@ export const authService = {
    * Get the current valid Firebase ID token (refreshes expired token automatically).
    */
   getIdToken: async (forceRefresh: boolean = false): Promise<string | null> => {
-    if (auth.currentUser) {
+    if (auth.currentUser && auth.currentUser.emailVerified) {
       try {
         const token = await auth.currentUser.getIdToken(forceRefresh);
         if (typeof window !== 'undefined') {
@@ -223,7 +328,7 @@ export const authService = {
    */
   onAuthStateChange: (callback: (user: User | null) => void): (() => void) => {
     return onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser) {
+      if (fbUser && fbUser.emailVerified) {
         try {
           const token = await fbUser.getIdToken();
           const user = mapFirebaseUser(fbUser);
@@ -279,14 +384,21 @@ if (typeof window !== 'undefined') {
   const _origLogin = authService.login.bind(authService);
   authService.login = async (...args) => {
     const result = await _origLogin(...args);
-    if (result.success) _setSessionCookie();
+    if (result.success && !result.needsVerification) _setSessionCookie();
     return result;
   };
 
   const _origRegister = authService.register.bind(authService);
   authService.register = async (...args) => {
     const result = await _origRegister(...args);
-    if (result.success) _setSessionCookie();
+    if (result.success && !result.needsVerification) _setSessionCookie();
+    return result;
+  };
+
+  const _origGoogle = authService.loginWithGoogle.bind(authService);
+  authService.loginWithGoogle = async (...args) => {
+    const result = await _origGoogle(...args);
+    if (result.success && !result.needsVerification) _setSessionCookie();
     return result;
   };
 }
@@ -294,7 +406,7 @@ if (typeof window !== 'undefined') {
 
 // ── fetchWithAuth — Authenticated fetch interceptor ───────────────────────────
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000';
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000').replace(/\/+$/, '');
 
 /**
  * Fetch wrapper that automatically attaches a Firebase Bearer token.
@@ -334,10 +446,10 @@ export async function fetchWithAuth(
     response = await fetch(url, await attachToken(true));
 
     if (response.status === 401) {
-      // Token is unrecoverable — sign out and redirect to login
+      // Token is unrecoverable — sign out and redirect to Landing Page
       await authService.logout();
       if (typeof window !== 'undefined') {
-        window.location.href = '/login';
+        window.location.href = '/';
       }
     }
   }

@@ -50,12 +50,20 @@ def auth_header() -> dict[str, str]:
 
 def _patch_firebase(decoded: dict):
     """Context manager: mock verify_id_token to return decoded payload."""
-    return patch("app.core.firebase.auth.verify_id_token", return_value=decoded)
+    return patch.multiple(
+        "app.core.firebase",
+        _firebase_app=MagicMock(),
+        auth=MagicMock(verify_id_token=MagicMock(return_value=decoded), revoke_refresh_tokens=MagicMock()),
+    )
 
 
 def _patch_firebase_error(exc: Exception):
     """Context manager: mock verify_id_token to raise an exception."""
-    return patch("app.core.firebase.auth.verify_id_token", side_effect=exc)
+    return patch.multiple(
+        "app.core.firebase",
+        _firebase_app=MagicMock(),
+        auth=MagicMock(verify_id_token=MagicMock(side_effect=exc)),
+    )
 
 
 # ── TestGetCurrentUserDependency ──────────────────────────────────────────────
@@ -65,7 +73,7 @@ class TestGetCurrentUserDependency:
 
     def test_missing_header_require_auth_true(self, client):
         """No Authorization header + REQUIRE_AUTH=True → 401."""
-        with patch("app.core.config.get_settings") as mock_settings:
+        with patch("app.core.dependencies.get_settings") as mock_settings:
             mock_settings.return_value = MagicMock(require_auth=True)
             response = client.get("/api/v1/auth/me")
         assert response.status_code == 401
@@ -80,24 +88,30 @@ class TestGetCurrentUserDependency:
 
     def test_wrong_scheme_empty_bearer(self, client):
         """Authorization: Bearer (no token) → 401."""
-        response = client.get(
-            "/api/v1/auth/me",
-            headers={"Authorization": "Bearer "},
-        )
+        with patch("app.core.dependencies.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(require_auth=True)
+            response = client.get(
+                "/api/v1/auth/me",
+                headers={"Authorization": "Bearer "},
+            )
         # Either 401 from decode failure or from empty token
         assert response.status_code in (401, 422)
 
     def test_invalid_token_signature(self, client, auth_header):
         """Malformed / wrong-key token → 401."""
         with _patch_firebase_error(Exception("invalid signature")), \
+             patch("app.core.dependencies.get_settings") as mock_settings, \
              patch("app.core.dependencies.persistence.upsert_user"):
+            mock_settings.return_value = MagicMock(require_auth=True)
             response = client.get("/api/v1/auth/me", headers=auth_header)
         assert response.status_code == 401
 
     def test_expired_token(self, client, auth_header):
         """Expired Firebase token → 401."""
         with _patch_firebase_error(Exception("Token expired")), \
+             patch("app.core.dependencies.get_settings") as mock_settings, \
              patch("app.core.dependencies.persistence.upsert_user"):
+            mock_settings.return_value = MagicMock(require_auth=True)
             response = client.get("/api/v1/auth/me", headers=auth_header)
         assert response.status_code == 401
 
@@ -152,7 +166,7 @@ class TestAuthMeEndpoint:
 
     def test_me_no_token(self, client):
         """No Authorization header → 401 when REQUIRE_AUTH=True."""
-        with patch("app.core.config.get_settings") as mock_settings:
+        with patch("app.core.dependencies.get_settings") as mock_settings:
             mock_settings.return_value = MagicMock(
                 require_auth=True,
                 firebase_service_account_path="",
@@ -221,7 +235,7 @@ class TestAuthLogoutEndpoint:
 
     def test_logout_no_token(self, client):
         """No Authorization header → 401."""
-        with patch("app.core.config.get_settings") as mock_settings:
+        with patch("app.core.dependencies.get_settings") as mock_settings:
             mock_settings.return_value = MagicMock(
                 require_auth=True,
                 firebase_service_account_path="",
@@ -237,7 +251,9 @@ class TestAuthLogoutEndpoint:
     def test_logout_invalid_token(self, client, auth_header):
         """Invalid Firebase token → 401."""
         with _patch_firebase_error(Exception("invalid token")), \
+             patch("app.core.dependencies.get_settings") as mock_settings, \
              patch("app.core.dependencies.persistence.upsert_user"):
+            mock_settings.return_value = MagicMock(require_auth=True)
             response = client.post("/api/v1/auth/logout", headers=auth_header)
         assert response.status_code == 401
 

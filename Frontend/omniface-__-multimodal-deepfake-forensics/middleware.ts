@@ -42,9 +42,8 @@ export function middleware(request: NextRequest): NextResponse {
   );
 
   if (isProtected && !isAuthenticated) {
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('from', pathname);
-    return NextResponse.redirect(loginUrl);
+    const landingUrl = new URL('/', request.url);
+    return NextResponse.redirect(landingUrl);
   }
 
   // ── Auth route accessed while already authenticated ───────────────────────

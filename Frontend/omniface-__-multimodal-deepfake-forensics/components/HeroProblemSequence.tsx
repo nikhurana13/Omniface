@@ -22,7 +22,9 @@ export default function HeroProblemSequence({ onScrollTo }: HeroProblemSequenceP
   const [isSwapped, setIsSwapped] = useState(false);
   const [lensRadiusIndex, setLensRadiusIndex] = useState(1);
   const radiusIndexRef = useRef(lensRadiusIndex);
-  radiusIndexRef.current = lensRadiusIndex;
+  useEffect(() => {
+    radiusIndexRef.current = lensRadiusIndex;
+  }, [lensRadiusIndex]);
 
   const sequenceContainerRef = useRef<HTMLDivElement>(null);
   const pinnedStageRef = useRef<HTMLDivElement>(null);

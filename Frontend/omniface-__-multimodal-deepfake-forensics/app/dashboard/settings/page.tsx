@@ -51,9 +51,9 @@ export default function SettingsPage() {
     }
   };
 
-  const handleLogout = () => {
-    authService.logout();
-    router.push('/');
+  const handleLogout = async () => {
+    await authService.logout();
+    router.replace('/');
   };
 
   return (

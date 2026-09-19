@@ -40,7 +40,23 @@ def initialize_firebase() -> None:
         return
 
     settings = get_settings()
-    cred = credentials.Certificate(settings.firebase_service_account_path)
+    raw_path = settings.firebase_service_account_path.strip() if settings.firebase_service_account_path else ""
+
+    import json
+    import os
+
+    if raw_path.startswith("{"):
+        cert_dict = json.loads(raw_path)
+        cred = credentials.Certificate(cert_dict)
+    elif raw_path and os.path.isfile(raw_path):
+        cred = credentials.Certificate(raw_path)
+    elif os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+        cred = credentials.ApplicationDefault()
+    elif raw_path:
+        cred = credentials.Certificate(raw_path)
+    else:
+        raise ValueError("Firebase credentials not found. Provide FIREBASE_SERVICE_ACCOUNT_PATH (file path or JSON string).")
+
     _firebase_app = firebase_admin.initialize_app(cred)
     logger.info("Firebase Admin SDK initialized successfully.")
 

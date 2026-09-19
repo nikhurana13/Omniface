@@ -43,7 +43,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     const unsubscribe = authService.onAuthStateChange((authUser) => {
       if (!authUser) {
         setUser(null);
-        router.replace('/login');
+        router.replace('/');
       } else {
         setUser(authUser);
       }
@@ -55,7 +55,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const handleLogout = async () => {
     await authService.logout();
-    router.push('/');
+    router.replace('/');
   };
 
   const navItems = [
